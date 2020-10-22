@@ -1,7 +1,8 @@
 from pyspark import Row, SparkConf
 from pyspark.sql import SparkSession
-import pyspark
 from pyspark.sql.types import StructType, IntegerType, StructField
+
+import pyspark
 
 conf = SparkConf() \
       .setAppName("MovieLensALS") \
@@ -42,34 +43,42 @@ def f(x):
     return d
 
 
+def getSchema():
+    genres = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: x[1:])
+    genres = list(set(genres.flatMap(lambda x: x).collect()))
+    genres.sort()
+    genres = ["movieID"] + genres
+    schema = StructType([StructField(name, IntegerType()) for name in genres])
+    print(schema)
+    return schema
+
+
 def fillInValues(schema: StructType, line: list):
-    columnNames = schema.fieldNames()
-    valuesIncluded = [""] * (len(columnNames) + 1)
+    columnNames = schema.fieldNames()[1:]
+    valuesIncluded = [0] * (len(columnNames) + 1)
     count = 0
     for genre in line:
         if count == 0:
-            valuesIncluded[0] = genre
+            valuesIncluded[0] = int(genre)
         elif genre in columnNames:
             # plus 1 is because the other list starts with movieID
             position = columnNames.index(genre) + 1
-            valuesIncluded[position] = "1"
+            valuesIncluded[position] = 1
         count += 1
     for index in range(0, len(valuesIncluded)):
         if valuesIncluded[index] == "":
-            valuesIncluded[index] = "0"
+            valuesIncluded[index] = 0
     return valuesIncluded
 
 
 def run():
-    movieGenreWithValuesRDD = movieGenreRDD
-    genres = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: x[1:])
-    genres = list(set(genres.flatMap(lambda x: x).collect()))
-    genres.sort()
-    schema = StructType([StructField(name, IntegerType()) for name in genres])
+    schema = getSchema()
     print(schema.fieldNames())
-    movieGenreWithValuesRDD = movieGenreWithValuesRDD.map(lambda x: Row(**f(x))).map(lambda x: fillInValues(schema, x))
+    movieGenreWithValuesRDD = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: fillInValues(schema, x))
     print(movieGenreWithValuesRDD.collect()[0])
-
+    df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
+    for row in df.head(5):
+        print(row)
 
 
 run()
