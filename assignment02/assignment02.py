@@ -1,8 +1,11 @@
 from pyspark import Row, SparkConf
+from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, IntegerType, StructField
 
 import pyspark
+# for VectorAssembler
+# import numpy as np
 
 conf = SparkConf() \
       .setAppName("MovieLensALS") \
@@ -71,6 +74,12 @@ def fillInValues(schema: StructType, line: list):
     return valuesIncluded
 
 
+def vectorizeFeatures(df):
+    vectorizer = VectorAssembler(inputCols=df.columns[1:], outputCol="Genres")
+    dfVectorGenres = vectorizer.transform(df).select("movieID", "Genres")
+    return dfVectorGenres
+
+
 def run():
     schema = getSchema()
     print(schema.fieldNames())
@@ -79,6 +88,8 @@ def run():
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
     for row in df.head(5):
         print(row)
+    dfVectorGenres = vectorizeFeatures(df)
+    dfVectorGenres.show()
 
 
 run()
