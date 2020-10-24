@@ -1,11 +1,14 @@
 from pyspark import Row, SparkConf
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, IntegerType, StructField
 
 import pyspark
-# for VectorAssembler
-# import numpy as np
+import numpy as np
+import matplotlib.pyplot as plt
+# need to install tkinter to see plots using sudo apt-get install python3-tk
 
 conf = SparkConf() \
       .setAppName("MovieLensALS") \
@@ -52,7 +55,6 @@ def getSchema():
     genres.sort()
     genres = ["movieID"] + genres
     schema = StructType([StructField(name, IntegerType()) for name in genres])
-    print(schema)
     return schema
 
 
@@ -75,21 +77,37 @@ def fillInValues(schema: StructType, line: list):
 
 
 def vectorizeFeatures(df):
-    vectorizer = VectorAssembler(inputCols=df.columns[1:], outputCol="Genres")
-    dfVectorGenres = vectorizer.transform(df).select("movieID", "Genres")
+    vectorizer = VectorAssembler(inputCols=df.columns[1:], outputCol="features")
+    dfVectorGenres = vectorizer.transform(df).select("movieID", "features")
     return dfVectorGenres
+
+
+def plotK(cost):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    ax.plot(range(2, 20), cost[2:20])
+    ax.set_xlabel('k')
+    ax.set_ylabel('cost')
+    plt.show()
+
+
+def getOptimalKPlot(df):
+    cost = np.zeros(20)
+    evaluator = ClusteringEvaluator()
+    for k in range(2, 20):
+        kmeans = KMeans().setK(k).setSeed(1).setFeaturesCol("features")
+        model = kmeans.fit(df.sample(False, 0.8, seed=32))
+        predictions = model.transform(df)
+        cost[k] = evaluator.evaluate(predictions)
+    plotK(cost)
 
 
 def run():
     schema = getSchema()
-    print(schema.fieldNames())
     movieGenreWithValuesRDD = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: fillInValues(schema, x))
-    print(movieGenreWithValuesRDD.collect()[0])
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
-    for row in df.head(5):
-        print(row)
     dfVectorGenres = vectorizeFeatures(df)
     dfVectorGenres.show()
+    getOptimalKPlot(dfVectorGenres)
 
 
 run()
