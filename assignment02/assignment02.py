@@ -4,8 +4,7 @@ from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, IntegerType, StructField
-from pyspark.sql.functions import col, avg
-
+import pyspark.sql.functions as psf
 import pyspark
 import numpy as np
 import matplotlib.pyplot as plt
@@ -106,7 +105,7 @@ def getOptimalKPlot(df):
 def getOptimalClustersDF(df):
     optimalkmeans = KMeans().setK(6).setSeed(1).setFeaturesCol("features")
     optimalmodel = optimalkmeans.fit(df)
-    return optimalmodel.transform(df).drop(df.features)
+    return optimalmodel.transform(df).drop(df.features), optimalmodel
 
 
 def parseMovieRatings(ratingLine: str):
@@ -135,7 +134,35 @@ def getRatingsDF():
 
 def joinRatingsAndMovieClusters(moviesDF):
     ratingsdf = getRatingsDF()
-    return ratingsdf.join(moviesDF, ["movieID"], how="right")
+    return ratingsdf.join(moviesDF, ["movieID"], how="left")
+
+
+# def getAvgMissingRatingsDF(joindf, movieDF):
+#     ratingDF = getRatingsDF()
+#     movies = movieDF.select("movieID").distinct()
+#     movies.show()
+#     users = ratingDF.select("userID").distinct()
+#     users.show()
+#     movieForEachUserDF = movies.crossJoin(users)
+#     movieForEachUserDF.show()
+#     ratingAndAvgDF = movieForEachUserDF.join(
+#         joindf,
+#         [movieForEachUserDF.movieID, joindf.userID],
+#         how="left"
+#     ).sort("userID", "movieID")
+#     ratingAndAvgDF.show()
+#     # return ratingAndAvgDF
+
+def getRMSE(df):
+    rmseDF = df.drop(df.userID).drop(df.prediction).drop(df.movieID)
+    rmse = rmseDF.withColumn("squarederror",
+                             psf.pow(psf.col("avg(rating)") - psf.col("rating"),
+                                     psf.lit(2))
+                             )\
+        .agg(psf.avg(psf.col("squarederror")).alias("mse"))\
+        .withColumn("rmse", psf.sqrt(psf.col("mse")))
+    return rmse.collect()
+
 
 def run():
     schema = getMovieSchema()
@@ -143,15 +170,15 @@ def run():
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
     dfVectorGenres = vectorizeFeatures(df)
     dfVectorGenres.show()
-    getOptimalKPlot(dfVectorGenres)
-    predictionsDF = getOptimalClustersDF(dfVectorGenres)  # optimal k appears to be 6
-    joinedDF = joinRatingsAndMovieClusters(predictionsDF).sort("userID", "movieID")
+    predictedClustersDF, optimalKModel = getOptimalClustersDF(dfVectorGenres)  # optimal k appears to be 6
+    joinedDF = joinRatingsAndMovieClusters(predictedClustersDF).sort("userID", "movieID")
     # trainDF, testDF = joinedDF.randomSplit([.8, .2])
     # trainDF = trainDF.sort("userID", "movieID")
     # testDF = testDF.sort("userID", "movieID")
     joinedAvgDF = joinedDF.groupBy("userID", "prediction").agg({"rating": "avg"})
-    joinedAvgDF = joinedAvgDF.sort("userID", "prediction")
+    joinedAvgDF = joinedAvgDF.join(joinedDF, ["userID", "prediction"], how="left").sort("userID", "movieID", "prediction")
     joinedAvgDF.show()
+    print(getRMSE(joinedAvgDF))
 
 
 run()
