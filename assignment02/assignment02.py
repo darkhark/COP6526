@@ -4,6 +4,7 @@ from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, IntegerType, StructField
+from pyspark.sql.functions import col, avg
 
 import pyspark
 import numpy as np
@@ -41,7 +42,7 @@ def parseMovieGenres(genreLine: str):
     return completeList
 
 
-def f(x):
+def movieParser(x):
     d = {}
     x = parseMovieGenres(x)
     for i in range(len(x)):
@@ -49,8 +50,8 @@ def f(x):
     return d
 
 
-def getSchema():
-    genres = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: x[1:])
+def getMovieSchema():
+    genres = movieGenreRDD.map(lambda x: Row(**movieParser(x))).map(lambda x: x[1:])
     genres = list(set(genres.flatMap(lambda x: x).collect()))
     genres.sort()
     genres = ["movieID"] + genres
@@ -93,21 +94,64 @@ def plotK(cost):
 def getOptimalKPlot(df):
     cost = np.zeros(20)
     evaluator = ClusteringEvaluator()
+    sample = df.sample(False, 0.8, seed=32)
     for k in range(2, 20):
         kmeans = KMeans().setK(k).setSeed(1).setFeaturesCol("features")
-        model = kmeans.fit(df.sample(False, 0.8, seed=32))
+        model = kmeans.fit(sample)
         predictions = model.transform(df)
         cost[k] = evaluator.evaluate(predictions)
     plotK(cost)
 
 
+def getOptimalClustersDF(df):
+    optimalkmeans = KMeans().setK(6).setSeed(1).setFeaturesCol("features")
+    optimalmodel = optimalkmeans.fit(df)
+    return optimalmodel.transform(df).drop(df.features)
+
+
+def parseMovieRatings(ratingLine: str):
+    fields = ratingLine.strip().split("::")
+    del fields[-1]
+    return fields
+
+
+def ratingsParser(x):
+    d = {}
+    x = parseMovieRatings(x)
+    for i in range(len(x)):
+        d[str(i)] = int(x[i])
+    return d
+
+
+def getRatingsSchema():
+    columns = ["userID", "movieID", "rating"]
+    return StructType([StructField(name, IntegerType()) for name in columns])
+
+
+def getRatingsDF():
+    rdd = movieRatingsRDD.map(lambda x: Row(**ratingsParser(x)))
+    return spark.createDataFrame(rdd.collect(), getRatingsSchema())
+
+
+def joinRatingsAndMovieClusters(moviesDF):
+    ratingsdf = getRatingsDF()
+    return ratingsdf.join(moviesDF, ["movieID"], how="right")
+
 def run():
-    schema = getSchema()
-    movieGenreWithValuesRDD = movieGenreRDD.map(lambda x: Row(**f(x))).map(lambda x: fillInValues(schema, x))
+    schema = getMovieSchema()
+    movieGenreWithValuesRDD = movieGenreRDD.map(lambda x: Row(**movieParser(x))).map(lambda x: fillInValues(schema, x))
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
     dfVectorGenres = vectorizeFeatures(df)
     dfVectorGenres.show()
     getOptimalKPlot(dfVectorGenres)
+    predictionsDF = getOptimalClustersDF(dfVectorGenres)  # optimal k appears to be 6
+    joinedDF = joinRatingsAndMovieClusters(predictionsDF).sort("userID", "movieID")
+    # trainDF, testDF = joinedDF.randomSplit([.8, .2])
+    # trainDF = trainDF.sort("userID", "movieID")
+    # testDF = testDF.sort("userID", "movieID")
+    joinedAvgDF = joinedDF.groupBy("userID", "prediction").agg({"rating": "avg"})
+    joinedAvgDF = joinedAvgDF.sort("userID", "prediction")
+    joinedAvgDF.show()
 
 
 run()
