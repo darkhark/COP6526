@@ -183,7 +183,6 @@ def runTask1():
     print(getRMSE(joinedAvgDF))
 
 
-#Create a function to find the best hyper parameters for tuning
 def runTask2(ranks, regParams, numIters):
     minimumError = 10000
     bestRank = 0
