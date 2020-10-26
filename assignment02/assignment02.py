@@ -1,7 +1,8 @@
 from pyspark import Row, SparkConf
 from pyspark.ml.clustering import KMeans
-from pyspark.ml.evaluation import ClusteringEvaluator
+from pyspark.ml.evaluation import ClusteringEvaluator, RegressionEvaluator
 from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.recommendation import ALS
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, IntegerType, StructField
 import pyspark.sql.functions as psf
@@ -164,7 +165,7 @@ def getRMSE(df):
     return rmse.collect()
 
 
-def run():
+def runTask1():
     schema = getMovieSchema()
     movieGenreWithValuesRDD = movieGenreRDD.map(lambda x: Row(**movieParser(x))).map(lambda x: fillInValues(schema, x))
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
@@ -181,4 +182,36 @@ def run():
     print(getRMSE(joinedAvgDF))
 
 
-run()
+#Create a function to find the best hyper parameters for tuning
+def runTask2(ranks, regParams, numIters):
+    minimumError = 10000
+    bestRank = 0
+    bestReg = 0
+    bestIter = 0
+    bestModel = None
+    ratingsDF = getRatingsDF()
+    ratingsTrain, ratingsTest = ratingsDF.randomSplit([.8, .2], seed=32)
+    for rank in ranks:
+        for item in regParams:
+            for maxIter in numIters:
+                als = ALS(userCol="userID", itemCol="movieID", ratingCol="rating",
+                          nonnegative=True, implicitPrefs=False, coldStartStrategy="drop")\
+                    .setRank(rank).setRegParam(item).setMaxIter(maxIter)
+                alsModel = als.fit(ratingsTrain)
+                preds = alsModel.transform(ratingsTest)
+                evaluator = RegressionEvaluator(metricName="rmse", labelCol="rating", predictionCol="prediction")
+                rmse = evaluator.evaluate(preds)
+                print('{} latent factors,  regs = {}, maxIters = {}: validation rmse is {}'
+                      .format(rank, item, maxIter, rmse))
+                if rmse < minimumError:
+                    minimumError=rmse
+                    bestRank = rank
+                    bestReg = item
+                    bestModel = alsModel
+                    bestIter = maxIter
+    print('\nThe best model has {} latent factors, reg = {}, and iterations {}'.format(bestRank, bestReg, bestIter))
+    return bestModel
+
+
+runTask1()
+runTask2([5, 10, 25, 50, 100], [1, .5, .1, .01], [5, 10, 15])
