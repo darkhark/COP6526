@@ -171,6 +171,7 @@ def runTask1():
     df = spark.createDataFrame(movieGenreWithValuesRDD.collect(), schema)
     dfVectorGenres = vectorizeFeatures(df)
     dfVectorGenres.show()
+    # getOptimalKPlot(dfVectorGenres)
     predictedClustersDF, optimalKModel = getOptimalClustersDF(dfVectorGenres)  # optimal k appears to be 6
     joinedDF = joinRatingsAndMovieClusters(predictedClustersDF).sort("userID", "movieID")
     # trainDF, testDF = joinedDF.randomSplit([.8, .2])
