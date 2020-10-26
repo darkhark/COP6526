@@ -17,8 +17,8 @@ conf = SparkConf() \
 sc = pyspark.SparkContext('local[*]')
 spark = SparkSession(sc)
 
-movieGenreRDD = sc.textFile('../Docs/movies.dat')
-movieRatingsRDD = sc.textFile('../Docs/ratings.dat')
+movieGenreRDD = sc.textFile('../Data/movies.dat')
+movieRatingsRDD = sc.textFile('../Data/ratings.dat')
 
 
 def parseMovieGenres(genreLine: str):
